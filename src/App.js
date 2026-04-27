@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from './firebase-config';
-import { collection, addDoc, query, onSnapshot, orderBy, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, query, onSnapshot, orderBy, serverTimestamp, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { ComposableMap, Geographies, Geography, Marker } from 'react-simple-maps';
 import './App.css';
 
@@ -12,6 +12,8 @@ function App() {
   const [userIp, setUserIp] = useState("IP 불러오는 중...");
   const [userCoords, setUserCoords] = useState(null);
   const [markers, setMarkers] = useState([]);
+  const [editId, setEditId] = useState(null);
+  const [editContent, setEditContent] = useState("");
 
   useEffect(() => {
     fetch('https://ipapi.co/json/')
@@ -51,8 +53,25 @@ function App() {
       });
       setContent("");
     } catch (error) {
-      alert("글쓰기에 실패했습니다. Firebase Rules 설정을 확인하세요.");
+      alert("글쓰기에 실패했습니다.");
     }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("정말 삭제할까요?")) return;
+    await deleteDoc(doc(db, "posts", id));
+  };
+
+  const handleEditStart = (post) => {
+    setEditId(post.id);
+    setEditContent(post.content);
+  };
+
+  const handleEditSave = async (id) => {
+    if (!editContent.trim()) return;
+    await updateDoc(doc(db, "posts", id), { content: editContent });
+    setEditId(null);
+    setEditContent("");
   };
 
   return (
@@ -81,12 +100,31 @@ function App() {
               <span className="user">{post.userName}</span>
               <span className="date">{post.createdAt?.toDate().toLocaleString() || "작성 중..."}</span>
             </div>
-            <p className="post-content">{post.content}</p>
+            {editId === post.id ? (
+              <div className="edit-area">
+                <textarea
+                  className="edit-textarea"
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                />
+                <div className="edit-btns">
+                  <button className="save-btn" onClick={() => handleEditSave(post.id)}>저장</button>
+                  <button className="cancel-btn" onClick={() => setEditId(null)}>취소</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="post-content">{post.content}</p>
+                <div className="post-actions">
+                  <button className="edit-btn" onClick={() => handleEditStart(post)}>✏️ 수정</button>
+                  <button className="delete-btn" onClick={() => handleDelete(post.id)}>🗑️ 삭제</button>
+                </div>
+              </>
+            )}
           </div>
         ))}
       </section>
 
-      {/* 지도 섹션 */}
       <section className="map-section">
         <h2 className="map-title">📍 접속자 위치 지도</h2>
         <p className="map-sub">글을 올린 분들의 위치예요</p>
