@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { db } from './firebase-config';
+import { db, auth, googleProvider } from './firebase-config';
 import { collection, addDoc, query, onSnapshot, orderBy, serverTimestamp, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { ComposableMap, Geographies, Geography, Marker } from 'react-simple-maps';
 import './App.css';
 
@@ -9,43 +10,59 @@ const GEO_URL = 'https://raw.githubusercontent.com/southkorea/southkorea-maps/ma
 function App() {
   const [posts, setPosts] = useState([]);
   const [content, setContent] = useState("");
-  const [userIp, setUserIp] = useState("IP 불러오는 중...");
+  const [user, setUser] = useState(null);
   const [userCoords, setUserCoords] = useState(null);
   const [markers, setMarkers] = useState([]);
   const [editId, setEditId] = useState(null);
   const [editContent, setEditContent] = useState("");
 
   useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+    });
+
     fetch('https://ipapi.co/json/')
       .then(res => res.json())
       .then(data => {
-        const parts = data.ip.split('.');
-        const maskedIp = `${parts[0]}.${parts[1]}.***.***`;
-        setUserIp(maskedIp);
         if (data.latitude && data.longitude) {
           setUserCoords({ lat: data.latitude, lng: data.longitude });
         }
       })
-      .catch(() => setUserIp("Unknown IP"));
+      .catch(() => {});
 
     const q = query(collection(db, "posts"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribeDb = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setPosts(data);
       const coords = data
         .filter(p => p.lat && p.lng)
-        .map(p => ({ lat: p.lat, lng: p.lng, name: p.userName }));
+        .map(p => ({ lat: p.lat, lng: p.lng }));
       setMarkers(coords);
     });
-    return unsubscribe;
+
+    return () => { unsubscribeAuth(); unsubscribeDb(); };
   }, []);
+
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      alert("로그인에 실패했습니다.");
+    }
+  };
+
+  const handleLogout = async () => {
+    await signOut(auth);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!content.trim()) return;
+    if (!content.trim() || !user) return;
     try {
       await addDoc(collection(db, "posts"), {
-        userName: userIp,
+        userName: user.displayName,
+        userPhoto: user.photoURL,
+        uid: user.uid,
         content: content,
         createdAt: serverTimestamp(),
         lat: userCoords?.lat || null,
@@ -79,25 +96,44 @@ function App() {
       <header>
         <h1>🇻🇳🇰🇷 우리들의 놀이터</h1>
         <p className="sub-text">베트남 친구들을 위한 정보 나눔 공간 (Sân chơi cộng đồng Việt-Hàn)</p>
+        <div className="auth-section">
+          {user ? (
+            <div className="user-info">
+              <img src={user.photoURL} alt="프로필" className="user-photo" />
+              <span className="user-name">{user.displayName}</span>
+              <button className="logout-btn" onClick={handleLogout}>로그아웃</button>
+            </div>
+          ) : (
+            <button className="login-btn" onClick={handleLogin}>
+              🔐 구글로 로그인
+            </button>
+          )}
+        </div>
       </header>
 
       <section className="input-section">
-        <div className="ip-display">📍 접속 주소: {userIp}</div>
-        <form onSubmit={handleSubmit}>
-          <textarea
-            placeholder="정보를 자유롭게 남겨주세요... (Hãy chia sẻ thông tin...)"
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-          ></textarea>
-          <button type="submit">글 올리기 (Đăng bài)</button>
-        </form>
+        {user ? (
+          <form onSubmit={handleSubmit}>
+            <textarea
+              placeholder="정보를 자유롭게 남겨주세요... (Hãy chia sẻ thông tin...)"
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+            ></textarea>
+            <button type="submit">글 올리기 (Đăng bài)</button>
+          </form>
+        ) : (
+          <p className="login-notice">✋ 글을 올리려면 먼저 로그인해주세요!</p>
+        )}
       </section>
 
       <section className="post-list">
         {posts.map(post => (
           <div key={post.id} className="post-card">
             <div className="post-header">
-              <span className="user">{post.userName}</span>
+              <div className="post-user">
+                {post.userPhoto && <img src={post.userPhoto} alt="프로필" className="post-photo" />}
+                <span className="user">{post.userName}</span>
+              </div>
               <span className="date">{post.createdAt?.toDate().toLocaleString() || "작성 중..."}</span>
             </div>
             {editId === post.id ? (
@@ -115,10 +151,12 @@ function App() {
             ) : (
               <>
                 <p className="post-content">{post.content}</p>
-                <div className="post-actions">
-                  <button className="edit-btn" onClick={() => handleEditStart(post)}>✏️ 수정</button>
-                  <button className="delete-btn" onClick={() => handleDelete(post.id)}>🗑️ 삭제</button>
-                </div>
+                {user && user.uid === post.uid && (
+                  <div className="post-actions">
+                    <button className="edit-btn" onClick={() => handleEditStart(post)}>✏️ 수정</button>
+                    <button className="delete-btn" onClick={() => handleDelete(post.id)}>🗑️ 삭제</button>
+                  </div>
+                )}
               </>
             )}
           </div>
